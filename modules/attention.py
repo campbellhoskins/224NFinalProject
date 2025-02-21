@@ -36,7 +36,9 @@ class CausalSelfAttention(nn.Module):
     ### YOUR CODE HERE
     attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(key.size(-1))
     attention_scores = attention_scores + (1 - attention_mask) * float('-inf')
-    
+    attention_weights = torch.softmax(attention_scores, dim=-1)
+    result = torch.matmul(attention_weights, value)
+    return result
 
 
   def forward(self, hidden_states, attention_mask):

@@ -28,9 +28,14 @@ from datasets import (
   load_paraphrase_data
 )
 from evaluation import model_eval_paraphrase, model_test_paraphrase
-from models.gpt2 import GPT2Model
+# TODO : Uncomment once our own gpt is implemented
+# from models.gpt2 import GPT2Model
 
-from optimizer import AdamW
+import torch.optim as optim
+from transformers import GPT2Model as OpenAIGPT2Model
+from transformers import GPT2Config
+from transformers import GPT2Tokenizer
+
 
 TQDM_DISABLE = False
 
@@ -50,7 +55,11 @@ class ParaphraseGPT(nn.Module):
 
   def __init__(self, args):
     super().__init__()
-    self.gpt = GPT2Model.from_pretrained(model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads)
+    # TODO : Use our custom gpt2 model once implemented and remove the OpenAIGPT2Model
+    #self.gpt = GPT2Model.from_pretrained(model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads)
+    self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
+    self.gpt.config = GPT2Config.from_pretrained(args.model_size)
+    self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
     self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
 
     # By default, fine-tune the full model.
@@ -72,7 +81,20 @@ class ParaphraseGPT(nn.Module):
 
     'Takes a batch of sentences and produces embeddings for them.'
     ### YOUR CODE HERE
-    raise NotImplementedError
+    output = self.gpt(input_ids=input_ids, attention_mask=attention_mask)  # [batch_size, seq_len, hidden_size]
+    # print shape
+    last_hidden_state = output['last_hidden_state']  
+    # extract the hidden state of the token that is the first non-padding token in each sequence
+    # get the last non-padding token
+    last_non_pad_idx = attention_mask.sum(dim=1) - 1
+    last_token = last_hidden_state[torch.arange(last_hidden_state.shape[0]), last_non_pad_idx]
+    logits = self.paraphrase_detection_head(last_token)
+
+    # verify shape 
+
+    return logits
+
+    #raise NotImplementedError
 
 
 
@@ -110,7 +132,10 @@ def train(args):
   model = model.to(device)
 
   lr = args.lr
-  optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
+
+  # TODO : CHANGE TO ADAMW once we implememnt our own optimizer
+  #optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
+  optimizer = optim.Adam(model.parameters(), lr=lr)
   best_dev_acc = 0
 
   # Run for the specified number of epochs.
@@ -123,12 +148,17 @@ def train(args):
       b_ids, b_mask, labels = batch['token_ids'], batch['attention_mask'], batch['labels'].flatten()
       b_ids = b_ids.to(device)
       b_mask = b_mask.to(device)
+      # Map the token IDs to binary labels.
+      yes_token_id = model.tokenizer.convert_tokens_to_ids("yes")
+      no_token_id = model.tokenizer.convert_tokens_to_ids("no")
+      labels = torch.where(labels == yes_token_id, torch.tensor(1, device=labels.device), torch.tensor(0, device=labels.device))
       labels = labels.to(device)
 
       # Compute the loss, gradients, and update the model's parameters.
       optimizer.zero_grad()
       logits = model(b_ids, b_mask)
       preds = torch.argmax(logits, dim=1)
+
       loss = F.cross_entropy(logits, labels, reduction='mean')
       loss.backward()
       optimizer.step()
@@ -229,6 +259,7 @@ def add_arguments(args):
 
 if __name__ == "__main__":
   args = get_args()
+  print(args)
   args.filepath = f'{args.epochs}-{args.lr}-paraphrase.pt'  # Save path.
   seed_everything(args.seed)  # Fix the seed for reproducibility.
   train(args)

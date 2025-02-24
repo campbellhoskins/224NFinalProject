@@ -64,7 +64,7 @@ class ParaphraseGPT(nn.Module):
     # TODO : Use our custom gpt2 model once implemented and remove the OpenAIGPT2Model
     #self.gpt = GPT2Model.from_pretrained(model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads)
     self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
-    self.gpt.config = GPT2Config.from_pretrained(args.model_size)
+    #self.gpt.config = GPT2Config.from_pretrained(args.model_size)
     self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
     self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
 
@@ -94,13 +94,15 @@ class ParaphraseGPT(nn.Module):
     # get the last non-padding token
     last_non_pad_idx = attention_mask.sum(dim=1) - 1
     last_token = last_hidden_state[torch.arange(last_hidden_state.shape[0]), last_non_pad_idx]
-    logits = self.paraphrase_detection_head(last_token)
+    # get the embedding matrix
+    embedding_matrix = self.gpt.get_input_embeddings().weight
+    # get the logits using the embedding matrix and no binary head
+    logits = torch.matmul(last_token, embedding_matrix.T)
+    #logits = self.paraphrase_detection_head(last_token)
 
     # verify shape 
 
     return logits
-
-    #raise NotImplementedError
 
 
 
@@ -165,10 +167,11 @@ def train(args):
       b_ids = b_ids.to(device)
       b_mask = b_mask.to(device)
       # Map the token IDs to binary labels.
-      yes_token_id = model.tokenizer.convert_tokens_to_ids("yes")
-      no_token_id = model.tokenizer.convert_tokens_to_ids("no")
-      labels = torch.where(labels == yes_token_id, torch.tensor(1, device=labels.device), torch.tensor(0, device=labels.device))
+      #yes_token_id = model.tokenizer.convert_tokens_to_ids("yes")
+      #no_token_id = model.tokenizer.convert_tokens_to_ids("no")
+      #labels = torch.where(labels == yes_token_id, torch.tensor(1, device=labels.device), torch.tensor(0, device=labels.device))
       labels = labels.to(device)
+      print("Labels:", labels)
 
       # Compute the loss, gradients, and update the model's parameters.
       optimizer.zero_grad()
@@ -176,7 +179,9 @@ def train(args):
       # use autocast to reduce memory usage
       with autocast():
         logits = model(b_ids, b_mask)
+        print("Logits:", logits)
         preds = torch.argmax(logits, dim=1)
+        print("Preds:", preds)
         loss = F.cross_entropy(logits, labels, reduction='mean')
 
       scaler.scale(loss).backward()

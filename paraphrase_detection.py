@@ -36,6 +36,12 @@ from transformers import GPT2Model as OpenAIGPT2Model
 from transformers import GPT2Config
 from transformers import GPT2Tokenizer
 
+from transformers import AdamW
+from transformers import get_linear_schedule_with_warmup
+
+from torch.cuda.amp import autocast, GradScaler
+
+
 
 TQDM_DISABLE = False
 
@@ -135,8 +141,18 @@ def train(args):
 
   # TODO : CHANGE TO ADAMW once we implememnt our own optimizer
   #optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
-  optimizer = optim.Adam(model.parameters(), lr=lr)
+  optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+
+  total_steps = len(para_train_dataloader) * args.epochs
+  scheduler = get_linear_schedule_with_warmup(
+      optimizer,
+      num_warmup_steps=int(0.1 * total_steps),
+      num_training_steps=total_steps
+  )
+  #optimizer = optim.Adam(model.parameters(), lr=lr)
   best_dev_acc = 0
+
+  scaler = GradScaler()
 
   # Run for the specified number of epochs.
   for epoch in range(args.epochs):
@@ -156,12 +172,20 @@ def train(args):
 
       # Compute the loss, gradients, and update the model's parameters.
       optimizer.zero_grad()
-      logits = model(b_ids, b_mask)
-      preds = torch.argmax(logits, dim=1)
 
-      loss = F.cross_entropy(logits, labels, reduction='mean')
-      loss.backward()
-      optimizer.step()
+      # use autocast to reduce memory usage
+      with autocast():
+        logits = model(b_ids, b_mask)
+        preds = torch.argmax(logits, dim=1)
+        loss = F.cross_entropy(logits, labels, reduction='mean')
+
+      scaler.scale(loss).backward()
+      scaler.step(optimizer)
+      scaler.update()
+
+      #loss.backward()
+      #optimizer.step()
+      scheduler.step()
 
       train_loss += loss.item()
       num_batches += 1

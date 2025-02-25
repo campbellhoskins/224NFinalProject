@@ -318,6 +318,7 @@ def add_arguments(args):
 
 
 if __name__ == "__main__":
+  print("Running the paraphrase detection script.")
   args = get_args()
   print(args)
   args.filepath = f'{args.epochs}-{args.lr}-paraphrase.pt'  # Save path.

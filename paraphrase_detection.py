@@ -40,6 +40,8 @@ from transformers import AdamW
 from transformers import get_linear_schedule_with_warmup
 
 from torch.cuda.amp import autocast, GradScaler
+import matplotlib.pyplot as plt
+
 
 
 
@@ -66,7 +68,9 @@ class ParaphraseGPT(nn.Module):
     self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
     #self.gpt.config = GPT2Config.from_pretrained(args.model_size)
     self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
-    self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
+
+    # Not using the below head because we compute our logits in forward directly using the paraphrase detection head
+    # self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
 
     # By default, fine-tune the full model.
     for param in self.gpt.parameters():
@@ -156,6 +160,10 @@ def train(args):
 
   scaler = GradScaler()
 
+  # Lists to record metrics over epochs.
+  epoch_losses = []
+  epoch_f1s = []
+
   # Run for the specified number of epochs.
   for epoch in range(args.epochs):
     model.train()
@@ -166,12 +174,14 @@ def train(args):
       b_ids, b_mask, labels = batch['token_ids'], batch['attention_mask'], batch['labels'].flatten()
       b_ids = b_ids.to(device)
       b_mask = b_mask.to(device)
+
       # Map the token IDs to binary labels.
       #yes_token_id = model.tokenizer.convert_tokens_to_ids("yes")
       #no_token_id = model.tokenizer.convert_tokens_to_ids("no")
       #labels = torch.where(labels == yes_token_id, torch.tensor(1, device=labels.device), torch.tensor(0, device=labels.device))
+
+      # Not mapping lables to binary so that we can use logits over all all tokens directly
       labels = labels.to(device)
-      print("Labels:", labels)
 
       # Compute the loss, gradients, and update the model's parameters.
       optimizer.zero_grad()
@@ -179,9 +189,7 @@ def train(args):
       # use autocast to reduce memory usage
       with autocast():
         logits = model(b_ids, b_mask)
-        print("Logits:", logits)
         preds = torch.argmax(logits, dim=1)
-        print("Preds:", preds)
         loss = F.cross_entropy(logits, labels, reduction='mean')
 
       scaler.scale(loss).backward()
@@ -203,7 +211,30 @@ def train(args):
       best_dev_acc = dev_acc
       save_model(model, optimizer, args, args.filepath)
 
+    epoch_losses.append(train_loss)
+    epoch_f1s.append(dev_f1)
+    epochs = range(1, args.epochs + 1)
+  
+
     print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev acc :: {dev_acc :.3f}")
+  plot_metrics(epochs, epoch_losses, epoch_f1s, args)
+
+def plot_metrics(epochs, losses, f1s, args):
+  plt.figure()
+  plt.plot(epochs, losses, marker='o')
+  plt.title('Training Loss per Epoch')
+  plt.xlabel('Epoch')
+  plt.ylabel('Loss')
+  plt.savefig('train_loss.png')
+  plt.close()
+
+  plt.figure()
+  plt.plot(epochs, f1s, marker='o')
+  plt.title('Validation F1 Score per Epoch')
+  plt.xlabel('Epoch')
+  plt.ylabel('F1 Score')
+  plt.savefig('dev_f1.png')
+  plt.close()
 
 
 @torch.no_grad()

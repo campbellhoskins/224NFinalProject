@@ -64,9 +64,7 @@ class ParaphraseGPT(nn.Module):
   def __init__(self, args):
     super().__init__()
     # TODO : Use our custom gpt2 model once implemented and remove the OpenAIGPT2Model
-    #self.gpt = GPT2Model.from_pretrained(model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads)
     self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
-    #self.gpt.config = GPT2Config.from_pretrained(args.model_size)
     self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
 
     # Not using the below head because we compute our logits in forward directly using the paraphrase detection head
@@ -92,19 +90,17 @@ class ParaphraseGPT(nn.Module):
     'Takes a batch of sentences and produces embeddings for them.'
     ### YOUR CODE HERE
     output = self.gpt(input_ids=input_ids, attention_mask=attention_mask)  # [batch_size, seq_len, hidden_size]
-    # print shape
     last_hidden_state = output['last_hidden_state']  
+
     # extract the hidden state of the token that is the first non-padding token in each sequence
-    # get the last non-padding token
     last_non_pad_idx = attention_mask.sum(dim=1) - 1
     last_token = last_hidden_state[torch.arange(last_hidden_state.shape[0]), last_non_pad_idx]
+
     # get the embedding matrix
     embedding_matrix = self.gpt.get_input_embeddings().weight
+
     # get the logits using the embedding matrix and no binary head
     logits = torch.matmul(last_token, embedding_matrix.T)
-    #logits = self.paraphrase_detection_head(last_token)
-
-    # verify shape 
 
     return logits
 
@@ -145,17 +141,17 @@ def train(args):
 
   lr = args.lr
 
-  # TODO : CHANGE TO ADAMW once we implememnt our own optimizer
-  #optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
+  # TODO : Using prebuilt AdamW Optimizer
   optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
   total_steps = len(para_train_dataloader) * args.epochs
+
+  # Suing a linear scheduler with warmup
   scheduler = get_linear_schedule_with_warmup(
       optimizer,
       num_warmup_steps=int(0.1 * total_steps),
       num_training_steps=total_steps
   )
-  #optimizer = optim.Adam(model.parameters(), lr=lr)
   best_dev_acc = 0
 
   scaler = GradScaler()
@@ -174,13 +170,6 @@ def train(args):
       b_ids, b_mask, labels = batch['token_ids'], batch['attention_mask'], batch['labels'].flatten()
       b_ids = b_ids.to(device)
       b_mask = b_mask.to(device)
-
-      # Map the token IDs to binary labels.
-      #yes_token_id = model.tokenizer.convert_tokens_to_ids("yes")
-      #no_token_id = model.tokenizer.convert_tokens_to_ids("no")
-      #labels = torch.where(labels == yes_token_id, torch.tensor(1, device=labels.device), torch.tensor(0, device=labels.device))
-
-      # Not mapping lables to binary so that we can use logits over all all tokens directly
       labels = labels.to(device)
 
       # Compute the loss, gradients, and update the model's parameters.
@@ -195,9 +184,6 @@ def train(args):
       scaler.scale(loss).backward()
       scaler.step(optimizer)
       scaler.update()
-
-      #loss.backward()
-      #optimizer.step()
       scheduler.step()
 
       train_loss += loss.item()

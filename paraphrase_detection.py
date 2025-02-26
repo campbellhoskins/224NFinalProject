@@ -70,6 +70,7 @@ class ParaphraseGPT(nn.Module):
     # Not using the below head because we compute our logits in forward directly using the paraphrase detection head
     # self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
 
+
     # By default, fine-tune the full model.
     for param in self.gpt.parameters():
       param.requires_grad = True

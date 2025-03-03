@@ -71,10 +71,10 @@ class ParaphraseGPT(nn.Module):
       self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
       
       # Freeze all parameters in the model
-      if args.peft_method != "full_finetune":
+      if args.peft_method != "full_finetune_classification_head" and args.peft_method != "full_finetune_embeddings":
         for param in self.gpt.parameters():
             param.requires_grad = False
-          
+        self.classification_head = nn.Linear(args.d, 2)
         # Apply PEFT based on method choice
         if args.peft_method == "lora":
             peft_config = LoraConfig(

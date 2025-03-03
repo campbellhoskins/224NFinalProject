@@ -363,7 +363,7 @@ def test(args):
     print(f"Loaded model to test from {args.filepath}")
     
     para_dev_data = load_paraphrase_data(args.para_dev)[:100]
-    para_test_data = load_paraphrase_data(args.para_test, split='test')
+    para_test_data = load_paraphrase_data(args.para_test, split='test')[:100]
   
     para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
     para_test_data = ParaphraseDetectionTestDataset(para_test_data, args)
@@ -415,7 +415,7 @@ def get_args():
                       help="Target modules for LoRA (default: attention layers)")
 
   parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
-  parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
+  parser.add_argument("--lr", type=float, help="learning rate", default=1e-4)
   parser.add_argument("--model_size", type=str,
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2')

@@ -110,11 +110,12 @@ class ParaphraseGPT(nn.Module):
     self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
     
     # Set requires_grad to False for all parameters by default
-    for param in self.gpt.parameters():
-      param.requires_grad = False
+    
       
     # Apply LoRA if enabled
     if args.use_lora:
+      for param in self.gpt.parameters():
+        param.requires_grad = False
       # Configure LoRA
       peft_config = LoraConfig(
           task_type=TaskType.CAUSAL_LM,
@@ -126,20 +127,15 @@ class ParaphraseGPT(nn.Module):
       )
       # Apply LoRA to the model
       self.gpt = get_peft_model(self.gpt, peft_config)
-      # Print trainable parameters stats
-      self.paraphrase_detection_head = nn.Linear(args.d, 2)
-      total_params = sum(p.numel() for p in self.parameters())
-      trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-      print(f"Total parameters: {total_params:,}")
-      print(f"Trainable parameters: {trainable_params:,} ({trainable_params/total_params:.2%})")
     else:
       # Traditional fine-tuning if not using LoRA
       for param in self.gpt.parameters():
         param.requires_grad = True
-      total_params = sum(p.numel() for p in self.parameters())
-      trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-      print(f"Total parameters: {total_params:,}")
-      print(f"Trainable parameters: {trainable_params:,} ({trainable_params/total_params:.2%})")
+    self.paraphrase_detection_head = nn.Linear(args.d, 2)
+    total_params = sum(p.numel() for p in self.parameters())
+    trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,} ({trainable_params/total_params:.2%})")
 
 
   def forward(self, input_ids, attention_mask):

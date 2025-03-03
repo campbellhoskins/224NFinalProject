@@ -32,11 +32,14 @@ def model_eval_paraphrase(dataloader, model, device):
 
     logits = model(b_ids, b_mask).cpu().numpy()
     preds = np.argmax(logits, axis=1).flatten()
+    #preds = [8505 if pred == 1 else 3919 for pred in preds]
 
     y_true.extend(labels)
     y_pred.extend(preds)
     sent_ids.extend(b_sent_ids)
 
+  print("Predictions: ", y_pred)
+  print("True: ", y_true)
   f1 = f1_score(y_true, y_pred, average='macro')
   acc = accuracy_score(y_true, y_pred)
 

@@ -108,7 +108,7 @@ class ParaphraseGPT(nn.Module):
     super().__init__()
     self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
     self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
-    #self.paraphrase_detection_head = nn.Linear(args.d, 2)
+    
     # Set requires_grad to False for all parameters by default
     for param in self.gpt.parameters():
       param.requires_grad = False
@@ -127,6 +127,7 @@ class ParaphraseGPT(nn.Module):
       # Apply LoRA to the model
       self.gpt = get_peft_model(self.gpt, peft_config)
       # Print trainable parameters stats
+      self.paraphrase_detection_head = nn.Linear(args.d, 2)
       total_params = sum(p.numel() for p in self.parameters())
       trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
       print(f"Total parameters: {total_params:,}")
@@ -164,11 +165,11 @@ class ParaphraseGPT(nn.Module):
 
     # Get the embedding matrix - need to handle PEFT model specially
     #if hasattr(self.gpt, 'base_model'):
-        # For PEFT model
+    #    # For PEFT model
     #    embedding_matrix = self.gpt.get_input_embeddings().weight
     #else:
-        # For regular model
-     #   embedding_matrix = self.gpt.get_input_embeddings().weight
+    #    # For regular model
+    #    embedding_matrix = self.gpt.get_input_embeddings().weight
 
     # Get logits by dot product with embedding matrix
     #logits = torch.matmul(last_token, embedding_matrix.T)
@@ -255,14 +256,33 @@ def train(args):
       with autocast():
         logits = model(b_ids, b_mask)
         preds = torch.argmax(logits, dim=1)
-        print("Preds : ", preds)
+        #print("Preds : ", preds)
         loss = F.cross_entropy(logits, labels, reduction='mean')
-      print("Labels : ", labels)
+      #print("Labels : ", labels)
 
       scaler.scale(loss).backward()
       scaler.step(optimizer)
       scaler.update()
       scheduler.step()
+      # After loss.backward() or scaler.scale(loss).backward(), unscale gradients if using GradScaler:
+      scaler.unscale_(optimizer)
+
+      # Check if gradients for the classification head are computed:
+      if model.paraphrase_detection_head.weight.grad is not None:
+          grad_norm = model.paraphrase_detection_head.weight.grad.norm().item()
+          print(f"Grad norm for classification head: {grad_norm:.4f}")
+
+      # Optionally, log the weight norm before and after the optimizer step:
+      weight_norm_before = model.paraphrase_detection_head.weight.norm().item()
+      print(f"Weight norm before update: {weight_norm_before:.4f}")
+
+      # Perform optimizer step:
+      scaler.step(optimizer)
+      scaler.update()
+
+      # After the update, check the new weight norm:
+      weight_norm_after = model.paraphrase_detection_head.weight.norm().item()
+      print(f"Weight norm after update: {weight_norm_after:.4f}")
 
       train_loss += loss.item()
       num_batches += 1
@@ -342,7 +362,7 @@ def test(args):
     model.eval()
     print(f"Loaded model to test from {args.filepath}")
     
-    para_dev_data = load_paraphrase_data(args.para_dev)
+    para_dev_data = load_paraphrase_data(args.para_dev)[:100]
     para_test_data = load_paraphrase_data(args.para_test, split='test')
   
     para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
@@ -395,7 +415,7 @@ def get_args():
                       help="Target modules for LoRA (default: attention layers)")
 
   parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
-  parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
+  parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
   parser.add_argument("--model_size", type=str,
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2')

@@ -1,3 +1,4 @@
+import math
 import torch
 
 from einops import rearrange
@@ -34,11 +35,16 @@ class CausalSelfAttention(nn.Module):
   def attention(self, key, query, value, attention_mask):
 
     ### YOUR CODE HERE
-    attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(key.size(-1))
-    attention_scores = attention_scores + (1 - attention_mask) * float('-inf')
-    attention_weights = torch.softmax(attention_scores, dim=-1)
-    result = torch.matmul(attention_weights, value)
-    return result
+    attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(query.size(-1))    
+    seq_len = query.shape[-2]
+    causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=query.device), diagonal=1)
+    causal_mask = causal_mask.masked_fill(causal_mask == 1, float('-inf'))
+    attention_scores = attention_scores + causal_mask  
+    attention_weights = torch.softmax(attention_scores, dim=-1)    
+    attention_weights = self.dropout(attention_weights)    
+    output = torch.matmul(attention_weights, value)
+    output = rearrange(output, "b h t d -> b t (h d)")
+    return output
 
 
   def forward(self, hidden_states, attention_mask):

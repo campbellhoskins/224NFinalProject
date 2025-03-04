@@ -32,7 +32,7 @@ from evaluation import model_eval_paraphrase, model_test_paraphrase
 # from models.gpt2 import GPT2Model
 
 import torch.optim as optim
-from transformers import GPT2LMHeadModel as OpenAIGPT2Model
+from transformers import GPT2Model as OpenAIGPT2Model
 from transformers import GPT2Config
 from transformers import GPT2Tokenizer
 
@@ -67,7 +67,12 @@ class ParaphraseGPT(nn.Module):
   def __init__(self, args):
       super().__init__()
       # Load the base GPT-2 model
-      self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
+      if args.peft_method != "full_finetune_classification_head" and args.peft_method != "full_finetune_embeddings":
+        self.gpt = OpenAIGPT2Model.from_pretrained("gpt2-large")
+        args.d = 1280
+        args.lr = 1e-4
+      else:
+        self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
       self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
       
       # Freeze all parameters in the model
@@ -89,7 +94,7 @@ class ParaphraseGPT(nn.Module):
             self.peft_type = "lora"
             
         elif args.peft_method == "adapter":
-            from peft import AdapterConfig
+            
             
             peft_config = AdapterConfig(
                 r=args.adapter_r,
@@ -105,22 +110,22 @@ class ParaphraseGPT(nn.Module):
             peft_config = PrefixTuningConfig(
                 task_type=TaskType.CAUSAL_LM,
                 num_virtual_tokens=args.num_virtual_tokens,
-                prefix_dropout=args.prefix_dropout,
+                #prefix_dropout=args.prefix_dropout,
                 encoder_hidden_size=args.d
             )
             self.gpt = get_peft_model(self.gpt, peft_config)
             self.peft_type = "prefix_tuning"
             
-        else:  # No PEFT, full fine-tuning
-            # Unfreeze parameters if not using PEFT
-            for param in self.gpt.parameters():
-                param.requires_grad = True
-            self.peft_type = "full_finetune"
       else:
         # Unfreeze parameters if not using PEFT
-        self.peft_type = "full_finetune"
+        if args.peft_method == "full_finetune_classification_head":
+          self.peft_type = "full_finetune_classification_head"
+          self.classification_head = nn.Linear(args.d, 2)
+        else:
+          self.peft_type = "full_finetune_embeddings"
         for param in self.gpt.parameters():
             param.requires_grad = True
+      
 
   def forward(self, input_ids, attention_mask, **kwargs):
     """
@@ -139,19 +144,33 @@ class ParaphraseGPT(nn.Module):
     # Remove labels if they exist because the base model doesn't accept them.
     kwargs.pop("labels", None)
 
-    ### YOUR CODE HERE
-    output = self.gpt(input_ids=input_ids, attention_mask=attention_mask, **kwargs)  # [batch_size, seq_len, hidden_size]
-    last_hidden_state = output['last_hidden_state']  
+    if self.peft_type == "full_finetune_embeddings":
+      output = self.gpt(input_ids=input_ids, attention_mask=attention_mask, **kwargs)  # [batch_size, seq_len, hidden_size]
+      last_hidden_state = output['last_hidden_state']  
 
-    # extract the hidden state of the token that is the first non-padding token in each sequence
-    last_non_pad_idx = attention_mask.sum(dim=1) - 1
-    last_token = last_hidden_state[torch.arange(last_hidden_state.shape[0]), last_non_pad_idx]
+      # extract the hidden state of the token that is the first non-padding token in each sequence
+      last_non_pad_idx = attention_mask.sum(dim=1) - 1
+      last_token = last_hidden_state[torch.arange(last_hidden_state.shape[0]), last_non_pad_idx]
 
-    # get the embedding matrix
-    embedding_matrix = self.gpt.get_input_embeddings().weight
+      # get the embedding matrix
+      embedding_matrix = self.gpt.get_input_embeddings().weight
 
-    # get the logits using the embedding matrix and no binary head
-    logits = torch.matmul(last_token, embedding_matrix.T)
+      # get the logits using the embedding matrix and no binary head
+      logits = torch.matmul(last_token, embedding_matrix.T)
+    else:
+      if hasattr(self.gpt, 'base_model'):
+        # This is a PEFT model
+        output = self.gpt.base_model.forward(input_ids=input_ids, attention_mask=attention_mask)
+      else:
+          # Regular GPT model
+          output = self.gpt(input_ids=input_ids, attention_mask=attention_mask)
+
+      last_hidden_state = output['last_hidden_state']  
+
+      # Extract the hidden state of the last non-padding token in each sequence
+      last_non_pad_idx = attention_mask.sum(dim=1) - 1
+      last_token = last_hidden_state[torch.arange(last_hidden_state.shape[0]), last_non_pad_idx]
+      logits = self.classification_head(last_token)
 
     return logits
   
@@ -190,8 +209,8 @@ def train(args, return_metrics=False):
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
     
     # Create the data and its corresponding datasets and dataloader
-    para_train_data = load_paraphrase_data(args.para_train)[:100]
-    para_dev_data = load_paraphrase_data(args.para_dev)[:100]
+    para_train_data = load_paraphrase_data(args.para_train)
+    para_dev_data = load_paraphrase_data(args.para_dev)
     
     # Use subset of data for quick experiments if specified
     if args.experiment_size > 0:
@@ -353,8 +372,13 @@ def test(args):
   model.eval()
   print(f"Loaded model to test from {args.filepath}")
 
-  para_dev_data = load_paraphrase_data(args.para_dev)[:100]
-  para_test_data = load_paraphrase_data(args.para_test, split='test')[:100]
+  
+  para_dev_data = load_paraphrase_data(args.para_dev)
+  para_test_data = load_paraphrase_data(args.para_test, split='test')
+
+  if args.experiment_size > 0:
+        para_dev_data = para_dev_data[:args.experiment_size]
+        para_dev_data = para_dev_data[:args.experiment_size]
 
   para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
   para_test_data = ParaphraseDetectionTestDataset(para_test_data, args)
@@ -398,13 +422,13 @@ def get_args():
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2')
 
-  parser.add_argument("--experiment_size", type=int, default=100,
+  parser.add_argument("--experiment_size", type=int, default=1500,
                       help="Number of examples to use for quick experiments (set to -1 for full dataset)")
   
 
   # PEFT method selection
-  parser.add_argument("--peft_method", type=str, default="full_finetune",
-                    choices=['lora', 'adapter', 'prefix_tuning', 'full_finetune'],
+  parser.add_argument("--peft_method", type=str, default="full_finetune_embeddings",
+                    choices=['lora', 'prefix_tuning', 'full_finetune_classification_head', 'full_finetune_embeddings'],
                     help="Parameter-efficient fine-tuning method")
   
   # LoRA specific arguments
@@ -443,7 +467,7 @@ def get_args():
 
 def compare_peft_methods(args):
     """Run experiments with different PEFT methods and compare results."""
-    methods = ["lora", "adapter", "prefix_tuning", "full_finetune"]
+    methods = ["lora", "prefix_tuning", "full_finetune_classification_head", "full_finetune_embeddings"]
     results = {}
     
     print("=" * 80)
@@ -465,13 +489,16 @@ def compare_peft_methods(args):
         
         # Update args for this method
         args.peft_method = method
+        if args.peft_method != "full_finetune_classification_head" and args.peft_method != "full_finetune_embeddings":
+          args.d = 1280
+          args.lr = 1e-4
         args.filepath = f'{args.epochs}-{args.lr}-{method}-paraphrase.pt'  # Save path
         
         # Train and evaluate
         model, optimizer, metrics = train(args, return_metrics=True)
         
         # Test and get results
-        test_metrics = test(args, model, optimizer)
+        test_metrics = test(args)
         
         # Store results
         results[method] = {
@@ -481,7 +508,8 @@ def compare_peft_methods(args):
             "test_acc": test_metrics["test_acc"] if test_metrics else None,
             "trainable_params": metrics["trainable_params"],
             "all_params": metrics["all_params"],
-            "trainable_percentage": metrics["trainable_percentage"]
+            "trainable_percentage": metrics["trainable_percentage"],
+            "lr": args.lr
         }
     
     # Restore original arguments
@@ -495,7 +523,7 @@ def compare_peft_methods(args):
     
     # Create a pretty table
     from tabulate import tabulate
-    headers = ["Method", "Train Loss", "Dev Acc", "Dev F1", "Trainable %", "Trainable Params"]
+    headers = ["Method", "Train Loss", "Dev Acc", "Dev F1", "Trainable %", "Trainable Params", "All Params"]
     table = []
     
     for method, metric in results.items():
@@ -505,7 +533,10 @@ def compare_peft_methods(args):
             f"{metric['dev_acc']:.4f}",
             f"{metric['dev_f1']:.4f}",
             f"{metric['trainable_percentage']:.2f}%",
-            f"{metric['trainable_params']:,}"
+            f"{metric['trainable_params']:,}",
+            f"{metric['all_params']:,}",
+            f"{metric['lr']:,}",
+
         ]
         table.append(row)
     

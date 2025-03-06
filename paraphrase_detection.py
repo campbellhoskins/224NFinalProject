@@ -44,9 +44,7 @@ import matplotlib.pyplot as plt
 
 from peft import get_peft_model, LoraConfig, TaskType
 
-
-
-
+from visualization import plot_metrics, create_comparison_plots, plot_metrics_map
 
 TQDM_DISABLE = False
 
@@ -60,19 +58,14 @@ def seed_everything(seed=11711):
   torch.backends.cudnn.benchmark = False
   torch.backends.cudnn.deterministic = True
 
-
 class ParaphraseGPT(nn.Module):
   """GPT-2 Model for paraphrase detection with PEFT support."""
 
   def __init__(self, args):
       super().__init__()
       # Load the base GPT-2 model
-      if args.peft_method != "full_finetune_classification_head" and args.peft_method != "full_finetune_embeddings":
-        self.gpt = OpenAIGPT2Model.from_pretrained("gpt2-large")
-        args.d = 1280
-        args.lr = 1e-4
-      else:
-        self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
+      
+      self.gpt = OpenAIGPT2Model.from_pretrained(args.model_size)
       self.tokenizer = GPT2Tokenizer.from_pretrained(args.model_size)
       
       # Freeze all parameters in the model
@@ -92,18 +85,6 @@ class ParaphraseGPT(nn.Module):
             )
             self.gpt = get_peft_model(self.gpt, peft_config)
             self.peft_type = "lora"
-            
-        elif args.peft_method == "adapter":
-            
-            
-            peft_config = AdapterConfig(
-                r=args.adapter_r,
-                adapter_dropout=args.adapter_dropout,
-                target_modules=args.target_modules
-            )
-            self.gpt = get_peft_model(self.gpt, peft_config)
-            self.peft_type = "adapter"
-            
         elif args.peft_method == "prefix_tuning":
             from peft import PrefixTuningConfig
             
@@ -115,7 +96,6 @@ class ParaphraseGPT(nn.Module):
             )
             self.gpt = get_peft_model(self.gpt, peft_config)
             self.peft_type = "prefix_tuning"
-            
       else:
         # Unfreeze parameters if not using PEFT
         if args.peft_method == "full_finetune_classification_head":
@@ -188,8 +168,6 @@ class ParaphraseGPT(nn.Module):
             "trainable_percentage": 100 * trainable_params / all_param
         }
 
-
-
 def save_model(model, optimizer, args, filepath):
   save_info = {
     'model': model.state_dict(),
@@ -202,7 +180,6 @@ def save_model(model, optimizer, args, filepath):
 
   torch.save(save_info, filepath)
   print(f"save the model to {filepath}")
-
 
 def train(args, return_metrics=False):
     """Train GPT-2 for paraphrase detection on the Quora dataset with PEFT support."""
@@ -310,7 +287,7 @@ def train(args, return_metrics=False):
     epochs_range = range(1, args.epochs + 1)
     
     # Plot metrics
-    plot_metrics(epochs_range, epoch_losses, epoch_accs, epoch_f1s, args)
+    #plot_metrics(epochs_range, epoch_losses, epoch_accs, epoch_f1s, args)
     
     if return_metrics:
         return model, optimizer, {
@@ -328,38 +305,6 @@ def train(args, return_metrics=False):
     
     return model, optimizer
 
-def plot_metrics(epochs, losses, accs, f1s, args):
-    """Plot training and evaluation metrics."""
-    # Create figure with 3 subplots
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
-    
-    # Plot training loss
-    ax1.plot(epochs, losses, marker='o', color='red', label=f'{args.peft_method}')
-    ax1.set_title(f'Training Loss per Epoch ({args.peft_method})')
-    ax1.set_ylabel('Loss')
-    ax1.grid(True)
-    ax1.legend()
-    
-    # Plot dev accuracy
-    ax2.plot(epochs, accs, marker='o', color='blue', label=f'{args.peft_method}')
-    ax2.set_title(f'Validation Accuracy per Epoch ({args.peft_method})')
-    ax2.set_ylabel('Accuracy')
-    ax2.grid(True)
-    ax2.legend()
-    
-    # Plot dev F1 score
-    ax3.plot(epochs, f1s, marker='o', color='green', label=f'{args.peft_method}')
-    ax3.set_title(f'Validation F1 Score per Epoch ({args.peft_method})')
-    ax3.set_xlabel('Epoch')
-    ax3.set_ylabel('F1 Score')
-    ax3.grid(True)
-    ax3.legend()
-    
-    plt.tight_layout()
-    plt.savefig(f'{args.peft_method}_metrics.png')
-    plt.close()
-
-
 @torch.no_grad()
 def test(args):
   """Evaluate your model on the dev and test datasets; save the predictions to disk."""
@@ -373,12 +318,12 @@ def test(args):
   print(f"Loaded model to test from {args.filepath}")
 
   
-  para_dev_data = load_paraphrase_data(args.para_dev)
+  para_dev_data = load_paraphrase_data(args.para_dev)[:args.experiment_size]
   para_test_data = load_paraphrase_data(args.para_test, split='test')
 
   if args.experiment_size > 0:
-        para_dev_data = para_dev_data[:args.experiment_size]
-        para_dev_data = para_dev_data[:args.experiment_size]
+    para_dev_data = para_dev_data[:args.experiment_size]
+    para_dev_data = para_dev_data[:args.experiment_size]
 
   para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
   para_test_data = ParaphraseDetectionTestDataset(para_test_data, args)
@@ -402,7 +347,6 @@ def test(args):
     for p, s in zip(test_para_sent_ids, test_para_y_pred):
       f.write(f"{p}, {s} \n")
 
-
 def get_args():
   parser = argparse.ArgumentParser()
 
@@ -420,7 +364,7 @@ def get_args():
   parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
   parser.add_argument("--model_size", type=str,
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
-                      choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2')
+                      choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2-large')
 
   parser.add_argument("--experiment_size", type=int, default=1500,
                       help="Number of examples to use for quick experiments (set to -1 for full dataset)")
@@ -460,10 +404,13 @@ def get_args():
   parser.add_argument("--compare_methods", action='store_true',
                     help="Run experiments with all PEFT methods for comparison")
   
+  # Compare lora methods automatically
+  parser.add_argument("--compare_lora", action='store_true',
+                    help="Run lora experiments with different parameters for comparison")
+  
   args = parser.parse_args()
 
   return args
-
 
 def compare_peft_methods(args):
     """Run experiments with different PEFT methods and compare results."""
@@ -547,55 +494,101 @@ def compare_peft_methods(args):
     
     return results
 
-def create_comparison_plots(results, args):
-    """Create plots to visualize comparison results."""
-    # Get methods and metrics
-    methods = list(results.keys())
+def compare_lora_methods(lora_configs, args, title):
+    """Run experiments with different LoRA hyperparameter configurations and compare results."""
+    # Define a list of LoRA hyperparameter configurations to test
     
-    # Create accuracy comparison plot
-    plt.figure(figsize=(10, 6))
+    results = {}
     
-    # Add bars for dev accuracy
-    plt.bar(
-        [i - 0.2 for i in range(len(methods))], 
-        [results[m]["dev_acc"] for m in methods],
-        width=0.4,
-        label="Dev Accuracy"
-    )
+    print("=" * 80)
+    print("STARTING LoRA HYPERPARAMETER COMPARISON")
+    print("=" * 80)
     
-    # Add bars for dev F1
-    plt.bar(
-        [i + 0.2 for i in range(len(methods))], 
-        [results[m]["dev_f1"] for m in methods],
-        width=0.4,
-        label="Dev F1"
-    )
+    # Store original hyperparameter settings
+    original_lora_r = args.lora_r
+    original_lora_alpha = args.lora_alpha
+    original_lr = args.lr
+    original_filepath = args.filepath
     
-    plt.xlabel("PEFT Method")
-    plt.ylabel("Score")
-    plt.title("Performance Comparison of PEFT Methods")
-    plt.xticks(range(len(methods)), methods)
-    plt.legend()
-    plt.grid(axis="y", linestyle="--", alpha=0.7)
-    plt.tight_layout()
-    plt.savefig("peft_performance_comparison.png")
+    # Set the PEFT method to "lora"
+    args.peft_method = "lora"
     
-    # Create parameter efficiency plot (log scale)
-    plt.figure(figsize=(10, 6))
+    if args.experiment_size > 0:
+        print(f"Using {args.experiment_size} examples for experiments")
     
-    # Calculate trainable parameters percentage
-    trainable_percentages = [results[m]["trainable_percentage"] for m in methods]
+    metrics_map = {}
+    # Iterate over each LoRA configuration
+    for config in lora_configs:
+        args.lora_r = config["lora_r"]
+        args.lora_alpha = config["lora_alpha"]
+        args.lr = config["lr"]
+        if title == "learning_rate":
+          title_arg = f"{config['lr']}"
+        elif title == "lora_r":
+          title_arg = f"{config['lora_r']}"
+        elif title == "lora_alpha":
+          title_arg = f"{config['lora_alpha']}"
+        # Update filepath to include hyperparameter info for clarity
+        args.filepath = f'{title}_{args.epochs}-{args.lr}-lora_r{args.lora_r}_alpha{args.lora_alpha}-paraphrase.pt'
+        
+        print(f"\n{'-' * 30}")
+        print(f"TESTING {title} LoRA configuration: r={args.lora_r}, alpha={args.lora_alpha}, lr={args.lr}")
+        print(f"{'-' * 30}")
+        
+        # Train and evaluate the model using the current LoRA settings
+        model, optimizer, metrics = train(args, return_metrics=True)
+        # Optionally, run test() to generate predictions (side-effects such as saving files)
+        #test(args)
+        
+        # Store the results
+        config_name = f"lora_{title}_{title_arg}"
+        metrics_map[config_name] = metrics
+        results[config_name] = {
+            "train_loss": metrics["final_train_loss"],
+            "dev_acc": metrics["final_dev_acc"],
+            "dev_f1": metrics["final_dev_f1"],
+            "trainable_params": metrics["trainable_params"],
+            "all_params": metrics["all_params"],
+            "trainable_percentage": metrics["trainable_percentage"],
+            "lr": args.lr,
+            "lora_r": args.lora_r,
+            "lora_alpha": args.lora_alpha,
+            "lora_dropout": args.lora_dropout
+        }
     
-    plt.bar(methods, trainable_percentages)
-    plt.xlabel("PEFT Method")
-    plt.ylabel("Trainable Parameters (%)")
-    plt.title("Parameter Efficiency of PEFT Methods")
-    plt.yscale("log")  # Log scale to better visualize the differences
-    plt.grid(axis="y", linestyle="--", alpha=0.7)
-    plt.tight_layout()
-    plt.savefig("peft_parameter_efficiency.png")
+    # Restore original hyperparameter settings
+    args.lora_r = original_lora_r
+    args.lora_alpha = original_lora_alpha
+    args.lr = original_lr
+    args.filepath = original_filepath
     
-    print(f"Comparison plots saved to: peft_performance_comparison.png and peft_parameter_efficiency.png")
+    # Print comparison results
+    print("\n" + "=" * 80)
+    print("LoRA HYPERPARAMETER COMPARISON RESULTS")
+    print("=" * 80)
+
+    plot_metrics_map(metrics_map, f"lora_{title}")
+    
+    from tabulate import tabulate
+    headers = ["Config", "Train Loss", "Dev Acc", "Dev F1", "Trainable %", "All Params", "lr", "lora_r", "lora_alpha"]
+    table = []
+    for config_name, metric in results.items():
+        row = [
+            config_name,
+            f"{metric['train_loss']:.4f}",
+            f"{metric['dev_acc']:.4f}",
+            f"{metric['dev_f1']:.4f}",
+            f"{metric['trainable_percentage']:.2f}%",
+            f"{metric['all_params']:,}",
+            f"{metric['lr']}",
+            f"{metric['lora_r']}",
+            f"{metric['lora_alpha']}",
+        ]
+        table.append(row)
+    
+    print(tabulate(table, headers=headers, tablefmt="grid"))
+    
+    return results
 
 def add_arguments(args):
   """Add arguments that are deterministic on model size."""
@@ -630,6 +623,25 @@ if __name__ == "__main__":
     # If comparison mode is enabled, run comparison experiments
     if args.compare_methods:
         results = compare_peft_methods(args)
+    elif args.compare_lora:
+        lora_configs = [
+        {"lora_r": 8, "lora_alpha": 32, "lr": 1e-5},
+        {"lora_r": 8, "lora_alpha": 32, "lr": 1e-4},
+        {"lora_r": 8, "lora_alpha": 32, "lr": 1e-3},
+        ]
+        results = compare_lora_methods(lora_configs, args, "learning_rate")
+        lora_configs = [
+        {"lora_r": 8, "lora_alpha": 32, "lr": 1e-4},
+        {"lora_r": 16, "lora_alpha": 32, "lr": 1e-4},
+        {"lora_r": 32, "lora_alpha": 32, "lr": 1e-4},
+        ]
+        results = compare_lora_methods(lora_configs, args, "lora_r")
+        lora_configs = [
+        {"lora_r": 32, "lora_alpha": 16, "lr": 1e-4},
+        {"lora_r": 32, "lora_alpha": 32, "lr": 1e-4},
+        {"lora_r": 32, "lora_alpha": 64, "lr": 1e-4},
+        ]
+        results = compare_lora_methods(lora_configs, args, "lora_alpha")
     else:
         # Run single method training
         model, optimizer = train(args)

@@ -65,7 +65,7 @@ class SonnetGPT(nn.Module):
     hidden_states = output['last_hidden_state']
     
     # get the embedding matrix
-    embedding_matrix = self.gpt.get_input_embeddings().weight
+    embedding_matrix = self.gpt.word_embedding.weight
 
     # get the logits for each token in the sequence
     logits = torch.matmul(hidden_states, embedding_matrix.T)

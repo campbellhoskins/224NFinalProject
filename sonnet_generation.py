@@ -61,7 +61,16 @@ class SonnetGPT(nn.Module):
     not just the distribution over next tokens for the last token!
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    output = self.gpt(input_ids=input_ids, attention_mask=attention_mask) # [batch_size, seq_len, hidden_size]
+    hidden_states = output['last_hidden_state']
+    
+    # get the embedding matrix
+    embedding_matrix = self.gpt.get_input_embeddings().weight
+
+    # get the logits for each token in the sequence
+    logits = torch.matmul(hidden_states, embedding_matrix.T)
+
+    return logits
 
 
   def get_device(self):

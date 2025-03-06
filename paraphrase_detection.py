@@ -52,7 +52,7 @@ class ParaphraseGPT(nn.Module):
     super().__init__()
     self.gpt = GPT2Model.from_pretrained(model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads)
     self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
-
+    # change
     # By default, fine-tune the full model.
     for param in self.gpt.parameters():
       param.requires_grad = True

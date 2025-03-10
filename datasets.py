@@ -161,3 +161,75 @@ class SonnetsDataset(Dataset):
     }
 
     return batched_data
+
+class SonnetPairDataset(Dataset):
+    def __init__(self, winning_file, losing_file):
+        """
+        winning_file: path to the file containing the 'winning' sonnets
+        losing_file:  path to the file containing the 'losing' sonnets
+        """
+        self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Load sonnets from both files
+        self.winning_sonnets = self._load_sonnets(winning_file)
+        self.losing_sonnets  = self._load_sonnets(losing_file)
+
+        # If one file has more lines than the other, you can either
+        # truncate to min length or sample. Here we’ll just match lengths.
+        min_len = min(len(self.winning_sonnets), len(self.losing_sonnets))
+        self.winning_sonnets = self.winning_sonnets[:min_len]
+        self.losing_sonnets  = self.losing_sonnets[:min_len]
+
+    def _load_sonnets(self, file_path):
+        """Reads the file and extracts individual sonnets (one per chunk)."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+
+        # Split sonnets based on numbering pattern (e.g., "\n\n1\n\n")
+        sonnets = re.split(r'\n\s*\d+\s*\n', text)[1:]  # Remove header text
+
+        return sonnets
+
+    def __len__(self):
+        return len(self.winning_sonnets)
+
+    def __getitem__(self, idx):
+        """
+        Return a pair:
+          (winning_sonnet_text, losing_sonnet_text)
+        """
+        return self.winning_sonnets[idx], self.losing_sonnets[idx]
+
+    def collate_fn(self, batch):
+        """
+        'batch' is a list of tuples: 
+          [ (win_sonnet_str, lose_sonnet_str), (win_sonnet_str, lose_sonnet_str), ... ]
+
+        We split them into separate lists, tokenize each, and return them.
+        """
+        winning_texts = [item[0] for item in batch]
+        losing_texts  = [item[1] for item in batch]
+
+        # Tokenize winning texts
+        win_enc = self.tokenizer(
+            winning_texts,
+            return_tensors='pt',
+            padding=True,
+            truncation=True
+        )
+
+        # Tokenize losing texts
+        lose_enc = self.tokenizer(
+            losing_texts,
+            return_tensors='pt',
+            padding=True,
+            truncation=True
+        )
+
+        return {
+            'winning_input_ids': win_enc['input_ids'],
+            'winning_attention_mask': win_enc['attention_mask'],
+            'losing_input_ids': lose_enc['input_ids'],
+            'losing_attention_mask': lose_enc['attention_mask'],
+        }

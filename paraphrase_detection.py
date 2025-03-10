@@ -42,7 +42,7 @@ from transformers import get_linear_schedule_with_warmup
 from torch.cuda.amp import GradScaler
 import matplotlib.pyplot as plt
 
-from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig, TaskType, PrefixTuningConfig
 
 from visualization import plot_metrics, create_comparison_plots, plot_metrics_map
 
@@ -76,17 +76,19 @@ class ParaphraseGPT(nn.Module):
         # Apply PEFT based on method choice
         if args.peft_method == "lora":
             peft_config = LoraConfig(
-                task_type=TaskType.CAUSAL_LM,      # Task type for PEFT
-                inference_mode=False,
-                r=args.lora_r,                  # Rank of the update matrices
-                lora_alpha=args.lora_alpha,     # Alpha parameter for LoRA scaling
-                lora_dropout=args.lora_dropout, # Dropout probability for LoRA layers
-                target_modules=args.target_modules  # Modules to apply LoRA to
+              task_type=TaskType.CAUSAL_LM,
+              inference_mode=False,
+              r=args.lora_r,  # rank of the update matrices
+              lora_alpha=args.lora_alpha,  # scaling factor
+              lora_dropout=args.lora_dropout,
+              use_rslora=False, # rank-scaled loRA
+              fan_in_fan_out=False,  # For GPT-2, leave as False
+              init_lora_weights=True,
+              target_modules=args.target_modules  # apply LoRA to attention matrices
             )
             self.gpt = get_peft_model(self.gpt, peft_config)
             self.peft_type = "lora"
         elif args.peft_method == "prefix_tuning":
-            from peft import PrefixTuningConfig
             
             peft_config = PrefixTuningConfig(
                 task_type=TaskType.CAUSAL_LM,
@@ -142,8 +144,8 @@ class ParaphraseGPT(nn.Module):
         # This is a PEFT model
         output = self.gpt.base_model.forward(input_ids=input_ids, attention_mask=attention_mask)
       else:
-          # Regular GPT model
-          output = self.gpt(input_ids=input_ids, attention_mask=attention_mask)
+        # Regular GPT model
+        output = self.gpt(input_ids=input_ids, attention_mask=attention_mask)
 
       last_hidden_state = output['last_hidden_state']  
 
@@ -361,7 +363,7 @@ def get_args():
   parser.add_argument("--use_gpu", action='store_true')
 
   parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
-  parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
+  parser.add_argument("--lr", type=float, help="learning rate", default=1e-4)
   parser.add_argument("--model_size", type=str,
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2-large')
@@ -378,7 +380,7 @@ def get_args():
   # LoRA specific arguments
   parser.add_argument("--lora_r", type=int, default=8, 
                     help="Rank dimension for LoRA")
-  parser.add_argument("--lora_alpha", type=int, default=32, 
+  parser.add_argument("--lora_alpha", type=int, default=64, 
                     help="Alpha parameter for LoRA")
   parser.add_argument("--lora_dropout", type=float, default=0.1, 
                     help="Dropout for LoRA layers")

@@ -89,7 +89,6 @@ class ParaphraseGPT(nn.Module):
             self.gpt = get_peft_model(self.gpt, peft_config)
             self.peft_type = "lora"
         elif args.peft_method == "prefix_tuning":
-            
             peft_config = PrefixTuningConfig(
                 task_type=TaskType.CAUSAL_LM,
                 num_virtual_tokens=args.num_virtual_tokens,
@@ -289,7 +288,8 @@ def train(args, return_metrics=False):
     epochs_range = range(1, args.epochs + 1)
     
     # Plot metrics
-    #plot_metrics(epochs_range, epoch_losses, epoch_accs, epoch_f1s, args)
+    plot_metrics(epochs_range, epoch_losses, epoch_accs, epoch_f1s, args)
+
     
     if return_metrics:
         return model, optimizer, {
@@ -368,7 +368,7 @@ def get_args():
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2-large')
 
-  parser.add_argument("--experiment_size", type=int, default=1500,
+  parser.add_argument("--experiment_size", type=int, default=-1,
                       help="Number of examples to use for quick experiments (set to -1 for full dataset)")
   
 

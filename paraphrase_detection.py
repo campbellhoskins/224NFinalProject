@@ -206,7 +206,9 @@ def train(args, return_metrics=False):
     args = add_arguments(args)
     model = ParaphraseGPT(args)
     model = model.to(device)
-    
+    # Find token id for 'yes'
+    yes_token_id = model.tokenizer.encode('yes')[0]
+    print("Yes : ", yes_token_id)
     # Get and log parameter counts
     param_stats = model.get_trainable_parameters()
     print(f"PEFT Method: {args.peft_method}")
@@ -647,6 +649,6 @@ if __name__ == "__main__":
     else:
         # Run single method training
         model, optimizer = train(args)
-        test(args)
+        #test(args)
         
     print("Done!")

@@ -50,9 +50,9 @@ class SonnetGPT(nn.Module):
     self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    # By default, fine-tune the full model. TODO: this is maybe not idea.
+    # By default, fine-tune the full model. TODO: this is maybe not ideal.
     for param in self.gpt.parameters():
-      param.requires_grad = True
+        param.requires_grad = True
 
   def forward(self, input_ids, attention_mask):
     """
@@ -194,21 +194,21 @@ def train(args):
     save_model(model, optimizer, args, f'{epoch}_{args.filepath}')
 
 def compute_sequence_logprob(model, input_ids, attention_mask):
-  # 1) Run forward to get logits: [B, seq_len, vocab_size]
+  # Run forward to get logits: [B, seq_len, vocab_size]
   logits = model(input_ids, attention_mask=attention_mask)
 
-  # 2) Convert to log-probs
+  # Convert to log-probs
   log_probs = F.log_softmax(logits, dim=-1)
 
-  # 3) Gather the log-prob of the 'gold' tokens
-  #    Shift: token_i is predicted by hidden state at i-1
+  # Gather the log-prob of the 'gold' tokens
+  # Shift: token_i is predicted by hidden state at i-1
   gold_log_probs = torch.gather(
     log_probs[:, :-1, :],
     dim=2,
     index=input_ids[:, 1:].unsqueeze(2)
   ).squeeze(-1)
 
-  # 4) Sum over the sequence dimension
+  # Sum over the sequence dimension
   sum_log_probs = gold_log_probs.sum(dim=1)
   return sum_log_probs
 
@@ -261,6 +261,8 @@ def trainDPO(args):
 
     # Training loop
     beta = 1.0
+    best_loss = float('inf')
+
     for epoch in range(args.epochs):
       model.train()
       train_loss = 0
@@ -299,7 +301,6 @@ def trainDPO(args):
         output = model.generate(encoding['input_ids'], temperature=args.temperature, top_p=args.top_p)
         print(f'{batch[1]}{output[1]}\n\n')
 
-      # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
       save_model(model, optimizer, args, f'{epoch}_{args.filepath}')
 
 @torch.no_grad()
@@ -342,7 +343,7 @@ def get_args():
   parser.add_argument("--sonnet_out", type=str, default="predictions/generated_sonnets.txt")
 
   parser.add_argument("--seed", type=int, default=11711)
-  parser.add_argument("--epochs", type=int, default=10)
+  parser.add_argument("--epochs", type=int, default=3)
   parser.add_argument("--use_gpu", action='store_true')
 
   # Generation parameters.

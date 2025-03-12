@@ -53,6 +53,12 @@ class SonnetGPT(nn.Module):
     # By default, fine-tune the full model. TODO: this is maybe not ideal.
     for param in self.gpt.parameters():
         param.requires_grad = True
+    
+    # Freeze the embedding layers
+    for param in self.gpt.word_embedding.parameters():
+        param.requires_grad = False
+    for param in self.gpt.pos_embedding.parameters():
+        param.requires_grad = False
 
   def forward(self, input_ids, attention_mask):
     """
@@ -78,7 +84,7 @@ class SonnetGPT(nn.Module):
       return param.device
 
   @torch.no_grad()
-  def generate(self, encoding, temperature=0.7, top_p=0.9, max_length=128):
+  def generate(self, encoding, temperature=0.7, top_p=0.9, top_k=50, max_length=128):
     """
     Generates an original sonnet using top-p sampling and softmax temperature.
 
@@ -256,12 +262,11 @@ def trainDPO(args):
       p.requires_grad = False
     ref_model.to(device)
 
-    # Create optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    lr = args.lr
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
     # Training loop
     beta = 1.0
-    best_loss = float('inf')
 
     for epoch in range(args.epochs):
       model.train()

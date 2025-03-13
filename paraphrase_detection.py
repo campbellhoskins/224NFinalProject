@@ -208,7 +208,6 @@ def train(args, return_metrics=False):
     model = model.to(device)
     # Find token id for 'yes'
     yes_token_id = model.tokenizer.encode('yes')[0]
-    print("Yes : ", yes_token_id)
     # Get and log parameter counts
     param_stats = model.get_trainable_parameters()
     print(f"PEFT Method: {args.peft_method}")
@@ -218,6 +217,11 @@ def train(args, return_metrics=False):
     # Only optimize trainable parameters
     optimizer = AdamW([p for p in model.parameters() if p.requires_grad], 
                      lr=args.lr, weight_decay=0.01)
+    
+    # If just testing baseline, skip training
+    if args.baseline:
+      save_model(model, optimizer, args, args.filepath)
+      return model, optimizer
 
     total_steps = len(para_train_dataloader) * args.epochs
 
@@ -386,6 +390,9 @@ def get_args():
                     help="Alpha parameter for LoRA")
   parser.add_argument("--lora_dropout", type=float, default=0.1, 
                     help="Dropout for LoRA layers")
+  
+  parser.add_argument("--baseline", type=bool, default=False, 
+                    help="Skip training and use pretrained model")
   
   # Adapter specific arguments
   parser.add_argument("--adapter_r", type=int, default=8, 
@@ -649,6 +656,6 @@ if __name__ == "__main__":
     else:
         # Run single method training
         model, optimizer = train(args)
-        #test(args)
+        test(args)
         
     print("Done!")

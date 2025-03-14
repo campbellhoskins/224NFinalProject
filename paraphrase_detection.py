@@ -655,7 +655,8 @@ if __name__ == "__main__":
         results = compare_lora_methods(lora_configs, args, "lora_alpha")
     else:
         # Run single method training
-        model, optimizer = train(args)
+        model, optimizer, metrics = train(args)
+        print(metrics)
         test(args)
         
     print("Done!")

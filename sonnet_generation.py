@@ -21,7 +21,7 @@ from transformers import GPT2Tokenizer
 from einops import rearrange
 
 from datasets import (
-  SonnetsDataset,
+  SonnetsDataset,SonnetPairDataset
 )
 from models.gpt2 import GPT2Model
 
@@ -50,9 +50,15 @@ class SonnetGPT(nn.Module):
     self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    # By default, fine-tune the full model. TODO: this is maybe not idea.
+    # By default, fine-tune the full model. TODO: this is maybe not ideal.
     for param in self.gpt.parameters():
-      param.requires_grad = True
+        param.requires_grad = True
+    
+    # Freeze the embedding layers
+    for param in self.gpt.word_embedding.parameters():
+        param.requires_grad = False
+    for param in self.gpt.pos_embedding.parameters():
+        param.requires_grad = False
 
   def forward(self, input_ids, attention_mask):
     """
@@ -61,7 +67,16 @@ class SonnetGPT(nn.Module):
     not just the distribution over next tokens for the last token!
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    output = self.gpt(input_ids=input_ids, attention_mask=attention_mask) # [batch_size, seq_len, hidden_size]
+    hidden_states = output['last_hidden_state']
+    
+    # get the embedding matrix
+    embedding_matrix = self.gpt.word_embedding.weight
+
+    # get the logits for each token in the sequence
+    logits = torch.matmul(hidden_states, embedding_matrix.T)
+
+    return logits
 
 
   def get_device(self):
@@ -69,7 +84,7 @@ class SonnetGPT(nn.Module):
       return param.device
 
   @torch.no_grad()
-  def generate(self, encoding, temperature=0.7, top_p=0.9, max_length=128):
+  def generate(self, encoding, temperature=0.7, top_p=0.9, top_k=50, max_length=128):
     """
     Generates an original sonnet using top-p sampling and softmax temperature.
 
@@ -181,9 +196,115 @@ def train(args):
       output = model.generate(encoding['input_ids'], temperature=args.temperature, top_p=args.top_p)
       print(f'{batch[1]}{output[1]}\n\n')
 
-    # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
     save_model(model, optimizer, args, f'{epoch}_{args.filepath}')
 
+def compute_sequence_logprob(model, input_ids, attention_mask):
+  # Run forward to get logits
+  logits = model(input_ids, attention_mask=attention_mask)
+
+  # Convert to log-probs
+  log_probs = F.log_softmax(logits, dim=-1)
+
+  # Gather the log-prob of the 'gold' tokens
+  gold_log_probs = torch.gather(
+    log_probs[:, :-1, :],
+    dim=2,
+    index=input_ids[:, 1:].unsqueeze(2)
+  ).squeeze(-1)
+
+  # Sum over the sequence dimension
+  sum_log_probs = gold_log_probs.sum(dim=1)
+  return sum_log_probs
+
+def dpo_loss(pos_logprob, neg_logprob, pos_logprob_ref, neg_logprob_ref, beta=1.0):
+  # (log p_theta(pos) - log p_ref(pos))
+  pos_diff = pos_logprob - pos_logprob_ref  
+  # (log p_theta(neg) - log p_ref(neg))
+  neg_diff = neg_logprob - neg_logprob_ref  
+
+  # difference = beta * [pos_diff - neg_diff]
+  difference = beta * (pos_diff - neg_diff)
+
+  # final DPO objective = - average over batch of log( sigmoid( difference ) )
+  return -torch.log(torch.sigmoid(difference)).mean()
+
+
+def trainDPO(args):
+    device = torch.device("cuda" if args.use_gpu else "cpu")
+
+    # Build the pairwise dataset
+    dataset = SonnetPairDataset(
+      winning_file=args.sonnet_path, 
+      losing_file=args.sonnet_losing_path
+    )
+
+    # Create DataLoader
+    dataloader = DataLoader(
+      dataset,
+      shuffle=True,
+      batch_size=args.batch_size,
+      collate_fn=dataset.collate_fn
+    )
+
+    held_out_sonnet_dataset = SonnetsDataset(args.held_out_sonnet_path)
+
+    # Instantiate model
+    args = add_arguments(args)
+    model = SonnetGPT(args)
+    model.to(device)
+
+    # Instantiate & freeze reference model
+    ref_model = SonnetGPT(args)
+    ref_model.eval()
+    for p in ref_model.parameters():
+      p.requires_grad = False
+    ref_model.to(device)
+
+    lr = args.lr
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+
+    # Training loop
+    beta = 1.0
+
+    for epoch in range(args.epochs):
+      model.train()
+      train_loss = 0
+      num_batches = 0
+
+      for batch in tqdm(dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+        # winning_input_ids, winning_attention_mask
+        w_ids  = batch["winning_input_ids"].to(device)
+        w_mask = batch["winning_attention_mask"].to(device)
+        # losing_input_ids, losing_attention_mask
+        l_ids  = batch["losing_input_ids"].to(device)
+        l_mask = batch["losing_attention_mask"].to(device)
+
+        # Compute log-probs for winning & losing sequences
+        pos_logprob = compute_sequence_logprob(model, w_ids, w_mask)
+        neg_logprob = compute_sequence_logprob(model, l_ids, l_mask)
+        pos_logprob_ref = compute_sequence_logprob(ref_model, w_ids, w_mask)
+        neg_logprob_ref = compute_sequence_logprob(ref_model, l_ids, l_mask)
+
+        # Compute DPO loss
+        loss = dpo_loss(pos_logprob, neg_logprob, pos_logprob_ref, neg_logprob_ref, beta=beta)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        train_loss += loss.item()
+        num_batches += 1
+
+      train_loss = train_loss / num_batches
+      print(f"Epoch {epoch}: train loss :: {train_loss :.3f}.")
+      print('Generating several output sonnets...')
+      model.eval()
+      for batch in held_out_sonnet_dataset:
+        encoding = model.tokenizer(batch[1], return_tensors='pt', padding=True, truncation=True).to(device)
+        output = model.generate(encoding['input_ids'], temperature=args.temperature, top_p=args.top_p)
+        print(f'{batch[1]}{output[1]}\n\n')
+
+      save_model(model, optimizer, args, f'{epoch}_{args.filepath}')
 
 @torch.no_grad()
 def generate_submission_sonnets(args):
@@ -220,11 +341,12 @@ def get_args():
   parser = argparse.ArgumentParser()
 
   parser.add_argument("--sonnet_path", type=str, default="data/sonnets.txt")
+  parser.add_argument("--sonnet_losing_path", type=str, default="data/sonnets_losing.txt")
   parser.add_argument("--held_out_sonnet_path", type=str, default="data/sonnets_held_out.txt")
   parser.add_argument("--sonnet_out", type=str, default="predictions/generated_sonnets.txt")
 
   parser.add_argument("--seed", type=int, default=11711)
-  parser.add_argument("--epochs", type=int, default=10)
+  parser.add_argument("--epochs", type=int, default=8)
   parser.add_argument("--use_gpu", action='store_true')
 
   # Generation parameters.
@@ -264,5 +386,5 @@ if __name__ == "__main__":
   args = get_args()
   args.filepath = f'{args.epochs}-{args.lr}-sonnet.pt'  # Save path.
   seed_everything(args.seed)  # Fix the seed for reproducibility.
-  train(args)
+  trainDPO(args)
   generate_submission_sonnets(args)

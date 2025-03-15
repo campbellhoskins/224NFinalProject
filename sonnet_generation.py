@@ -196,18 +196,16 @@ def train(args):
       output = model.generate(encoding['input_ids'], temperature=args.temperature, top_p=args.top_p)
       print(f'{batch[1]}{output[1]}\n\n')
 
-    # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
     save_model(model, optimizer, args, f'{epoch}_{args.filepath}')
 
 def compute_sequence_logprob(model, input_ids, attention_mask):
-  # Run forward to get logits: [B, seq_len, vocab_size]
+  # Run forward to get logits
   logits = model(input_ids, attention_mask=attention_mask)
 
   # Convert to log-probs
   log_probs = F.log_softmax(logits, dim=-1)
 
   # Gather the log-prob of the 'gold' tokens
-  # Shift: token_i is predicted by hidden state at i-1
   gold_log_probs = torch.gather(
     log_probs[:, :-1, :],
     dim=2,
@@ -348,7 +346,7 @@ def get_args():
   parser.add_argument("--sonnet_out", type=str, default="predictions/generated_sonnets.txt")
 
   parser.add_argument("--seed", type=int, default=11711)
-  parser.add_argument("--epochs", type=int, default=3)
+  parser.add_argument("--epochs", type=int, default=8)
   parser.add_argument("--use_gpu", action='store_true')
 
   # Generation parameters.
